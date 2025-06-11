@@ -1,0 +1,506 @@
+---
+title: Data Flow and Component Interactions
+---
+
+<div id="enable-section-numbers" />
+
+This document provides detailed visual representations of how data flows through the MCP system and how different components interact with each other during various operations.
+
+## Resource Management Flow
+
+### Resource Discovery and Access Pattern
+
+```mermaid
+sequenceDiagram
+    participant User as End User
+    participant Host as Host Application
+    participant Client as MCP Client
+    participant Server as MCP Server
+    participant FS as File System
+    participant DB as Database
+    participant API as External API
+
+    Note over User,API: Resource Discovery Phase
+
+    User->>Host: Request available resources
+    Host->>Client: Enumerate connected servers
+
+    par Resource Discovery from Multiple Servers
+        Client->>Server: list_resources()
+        Server->>FS: scan_filesystem()
+        FS-->>Server: file_list[]
+        Server-->>Client: resources_response(file_resources[])
+    and
+        Client->>Server: list_resources()
+        Server->>DB: query_available_tables()
+        DB-->>Server: table_list[]
+        Server-->>Client: resources_response(db_resources[])
+    and
+        Client->>Server: list_resources()
+        Server->>API: get_available_endpoints()
+        API-->>Server: endpoint_list[]
+        Server-->>Client: resources_response(api_resources[])
+    end
+
+    Client-->>Host: aggregated_resources[]
+    Host-->>User: Display available resources
+
+    Note over User,API: Resource Access Phase
+
+    User->>Host: Request specific resource
+    Host->>Client: read_resource(uri)
+
+    alt File Resource
+        Client->>Server: read_resource(file://path)
+        Server->>FS: read_file(path)
+        FS-->>Server: file_content
+        Server-->>Client: resource_response(content)
+    else Database Resource
+        Client->>Server: read_resource(db://table/query)
+        Server->>DB: execute_query(query)
+        DB-->>Server: query_results
+        Server-->>Client: resource_response(results)
+    else API Resource
+        Client->>Server: read_resource(api://endpoint)
+        Server->>API: make_request(endpoint)
+        API-->>Server: api_response
+        Server-->>Client: resource_response(data)
+    end
+
+    Client-->>Host: resource_content
+    Host-->>User: Present content to LLM/User
+```
+
+### Resource Subscription and Update Flow
+
+```mermaid
+graph TD
+    subgraph "Subscription Management"
+        SM[Subscription Manager]
+        ST[Subscription Table]
+        WM[Watcher Manager]
+        NQ[Notification Queue]
+
+        SM --> ST
+        SM --> WM
+        WM --> NQ
+    end
+
+    subgraph "Resource Monitoring"
+        FS_WATCH[File System Watcher]
+        DB_WATCH[Database Change Monitor]
+        API_WATCH[API Webhook Handler]
+
+        FS_WATCH --> WM
+        DB_WATCH --> WM
+        API_WATCH --> WM
+    end
+
+    subgraph "Change Detection"
+        CD[Change Detector]
+        FD[File Difference]
+        DD[Data Difference]
+        AD[API Difference]
+
+        CD --> FD
+        CD --> DD
+        CD --> AD
+    end
+
+    subgraph "Notification Delivery"
+        NP[Notification Processor]
+        NF[Notification Filter]
+        ND[Notification Dispatcher]
+
+        NQ --> NP
+        NP --> NF
+        NF --> ND
+    end
+
+    FS_WATCH --> CD
+    DB_WATCH --> CD
+    API_WATCH --> CD
+
+    CD --> NQ
+    ND --> SM
+```
+
+## Tool Execution Patterns
+
+### Tool Discovery and Execution Flow
+
+```mermaid
+sequenceDiagram
+    participant LLM as Language Model
+    participant Host as Host Application
+    participant Client as MCP Client
+    participant Server as Tool Server
+    participant Tool as Tool Implementation
+    participant Env as Environment
+
+    Note over LLM,Env: Tool Discovery Phase
+
+    LLM->>Host: Need to perform action
+    Host->>Client: Get available tools
+    Client->>Server: list_tools()
+    Server-->>Client: tools_response(available_tools[])
+    Client-->>Host: tools_list[]
+    Host-->>LLM: Present tool options
+
+    Note over LLM,Env: Tool Selection and Execution
+
+    LLM->>Host: Select tool with parameters
+    Host->>Client: call_tool(name, arguments)
+
+    rect rgb(255, 248, 240)
+        Client->>Server: call_tool(name, arguments)
+        Server->>Server: validate_arguments()
+        Server->>Server: check_permissions()
+        Server->>Server: prepare_execution_context()
+    end
+
+    Server->>Tool: execute(validated_arguments)
+
+    alt Synchronous Tool
+        Tool->>Env: perform_action()
+        Env-->>Tool: action_result
+        Tool-->>Server: execution_result
+    else Asynchronous Tool
+        Tool->>Tool: start_background_process()
+        Tool-->>Server: progress_token
+
+        loop Progress Updates
+            Tool->>Server: report_progress(token, status)
+            Server--)Client: progress_notification
+            Client--)Host: progress_update
+        end
+
+        Tool->>Env: complete_action()
+        Env-->>Tool: final_result
+        Tool-->>Server: execution_complete(result)
+    end
+
+    Server-->>Client: tool_response(result)
+    Client-->>Host: execution_result
+    Host-->>LLM: Tool output
+```
+
+### Tool Chaining and Composition
+
+```mermaid
+graph TD
+    subgraph "Tool Orchestration Engine"
+        TO[Tool Orchestrator]
+        TC[Tool Composer]
+        TM[Tool Manager]
+
+        TO --> TC
+        TC --> TM
+    end
+
+    subgraph "Tool Chain Execution"
+        T1[Tool 1: Data Fetch]
+        T2[Tool 2: Data Transform]
+        T3[Tool 3: Data Analyze]
+        T4[Tool 4: Generate Report]
+
+        T1 --> T2
+        T2 --> T3
+        T3 --> T4
+    end
+
+    subgraph "Data Flow Management"
+        DFM[Data Flow Manager]
+        DTR[Data Transformer]
+        DV[Data Validator]
+
+        DFM --> DTR
+        DTR --> DV
+    end
+
+    subgraph "Error Handling"
+        EH[Error Handler]
+        RB[Rollback Manager]
+        RT[Retry Logic]
+
+        EH --> RB
+        EH --> RT
+    end
+
+    TC --> T1
+    TM --> DFM
+    T1 -.->|Error| EH
+    T2 -.->|Error| EH
+    T3 -.->|Error| EH
+    T4 -.->|Error| EH
+
+    DV --> T2
+    DV --> T3
+    DV --> T4
+```
+
+## Prompt Template Processing
+
+### Prompt Discovery and Rendering Flow
+
+```mermaid
+sequenceDiagram
+    participant User as User
+    participant Host as Host Application
+    participant Client as MCP Client
+    participant Server as Prompt Server
+    participant Template as Template Engine
+    participant Context as Context Provider
+
+    Note over User,Context: Prompt Discovery
+
+    User->>Host: Request available prompts
+    Host->>Client: Get prompt catalog
+    Client->>Server: list_prompts()
+    Server-->>Client: prompts_response(prompt_list[])
+    Client-->>Host: available_prompts[]
+    Host-->>User: Display prompt options
+
+    Note over User,Context: Prompt Selection and Rendering
+
+    User->>Host: Select prompt with parameters
+    Host->>Client: get_prompt(name, arguments)
+    Client->>Server: get_prompt(name, arguments)
+
+    rect rgb(240, 255, 240)
+        Server->>Template: load_template(name)
+        Template-->>Server: template_definition
+
+        Server->>Context: gather_context(arguments)
+        Context-->>Server: contextual_data
+
+        Server->>Template: render(template, arguments, context)
+        Template-->>Server: rendered_prompt
+    end
+
+    Server-->>Client: prompt_response(rendered_content)
+    Client-->>Host: prompt_content
+    Host-->>User: Present rendered prompt
+```
+
+### Dynamic Prompt Composition
+
+```mermaid
+graph LR
+    subgraph "Prompt Components"
+        PC[Prompt Components]
+        SYS[System Instructions]
+        CTX[Context Blocks]
+        EX[Examples]
+        TASK[Task Definition]
+
+        PC --> SYS
+        PC --> CTX
+        PC --> EX
+        PC --> TASK
+    end
+
+    subgraph "Composition Engine"
+        CE[Composition Engine]
+        TR[Template Resolver]
+        VE[Variable Expander]
+        CF[Conditional Filter]
+
+        CE --> TR
+        TR --> VE
+        VE --> CF
+    end
+
+    subgraph "Context Integration"
+        CI[Context Integrator]
+        RP[Resource Provider]
+        TP[Tool Provider]
+        HP[History Provider]
+
+        CI --> RP
+        CI --> TP
+        CI --> HP
+    end
+
+    subgraph "Output Generation"
+        OG[Output Generator]
+        FM[Format Manager]
+        VM[Validation Manager]
+
+        OG --> FM
+        FM --> VM
+    end
+
+    PC --> CE
+    CE --> CI
+    CI --> OG
+
+    RP -.->|Resource Data| VE
+    TP -.->|Tool Descriptions| VE
+    HP -.->|Conversation History| VE
+```
+
+## Sampling and Context Integration
+
+### LLM Sampling Request Flow
+
+```mermaid
+sequenceDiagram
+    participant Server as MCP Server
+    participant Client as MCP Client
+    participant Host as Host Application
+    participant LLM as Language Model
+    participant User as End User
+
+    Note over Server,User: Sampling Request Initiation
+
+    Server->>Client: sampling/createMessage(messages, preferences)
+
+    rect rgb(255, 248, 240)
+        Client->>Client: validate_sampling_request()
+        Client->>Client: check_permissions()
+        Client->>Client: prepare_context()
+    end
+
+    Client->>Host: Forward sampling request
+    Host->>User: Request user approval (HITL)
+
+    alt User Approves
+        User-->>Host: Approval granted
+        Host->>Host: prepare_llm_context()
+
+        rect rgb(240, 248, 255)
+            Host->>LLM: send_messages(context + request)
+            LLM->>LLM: process_context()
+            LLM->>LLM: generate_response()
+            LLM-->>Host: generated_message
+        end
+
+        Host->>User: Present response for review
+
+        alt User Approves Response
+            User-->>Host: Response approved
+            Host-->>Client: sampling_response(message)
+            Client-->>Server: Deliver response
+        else User Rejects Response
+            User-->>Host: Response rejected
+            Host-->>Client: sampling_error(rejected)
+            Client-->>Server: Error response
+        end
+
+    else User Denies
+        User-->>Host: Request denied
+        Host-->>Client: sampling_error(denied)
+        Client-->>Server: Permission denied
+    end
+```
+
+### Context Aggregation and Synthesis
+
+```mermaid
+graph TD
+    subgraph "Context Sources"
+        CS[Context Sources]
+        RES[Resources]
+        TOOLS[Tools]
+        PROMPTS[Prompts]
+        HIST[History]
+
+        CS --> RES
+        CS --> TOOLS
+        CS --> PROMPTS
+        CS --> HIST
+    end
+
+    subgraph "Context Processing"
+        CP[Context Processor]
+        FILTER[Context Filter]
+        RANK[Relevance Ranker]
+        MERGE[Context Merger]
+
+        CP --> FILTER
+        FILTER --> RANK
+        RANK --> MERGE
+    end
+
+    subgraph "Context Optimization"
+        CO[Context Optimizer]
+        COMPRESS[Compression Engine]
+        PRIORITY[Priority Sorter]
+        LIMIT[Length Limiter]
+
+        CO --> COMPRESS
+        CO --> PRIORITY
+        CO --> LIMIT
+    end
+
+    subgraph "Context Delivery"
+        CD[Context Deliverer]
+        FORMAT[Format Adapter]
+        VALIDATE[Validation Engine]
+
+        CD --> FORMAT
+        FORMAT --> VALIDATE
+    end
+
+    RES --> CP
+    TOOLS --> CP
+    PROMPTS --> CP
+    HIST --> CP
+
+    MERGE --> CO
+    LIMIT --> CD
+    VALIDATE --> CS
+```
+
+## Error Propagation and Recovery
+
+### Error Classification and Handling
+
+```mermaid
+graph TD
+    ERROR[Error Detected]
+
+    ERROR --> CLASSIFY{Classify Error Type}
+
+    CLASSIFY -->|Transport| TRANSPORT_ERR[Transport Error]
+    CLASSIFY -->|Protocol| PROTOCOL_ERR[Protocol Error]
+    CLASSIFY -->|Application| APP_ERR[Application Error]
+    CLASSIFY -->|Resource| RESOURCE_ERR[Resource Error]
+    CLASSIFY -->|Tool| TOOL_ERR[Tool Error]
+
+    TRANSPORT_ERR --> CONN_RETRY[Connection Retry]
+    TRANSPORT_ERR --> FALLBACK_TRANSPORT[Fallback Transport]
+
+    PROTOCOL_ERR --> VERSION_NEG[Version Negotiation]
+    PROTOCOL_ERR --> CAPABILITY_DISABLE[Disable Capability]
+
+    APP_ERR --> GRACEFUL_DEGRADE[Graceful Degradation]
+    APP_ERR --> USER_NOTIFY[Notify User]
+
+    RESOURCE_ERR --> ALTERNATIVE_SOURCE[Find Alternative]
+    RESOURCE_ERR --> CACHE_FALLBACK[Use Cache]
+
+    TOOL_ERR --> RETRY_TOOL[Retry Execution]
+    TOOL_ERR --> ALTERNATIVE_TOOL[Use Alternative Tool]
+
+    CONN_RETRY --> SUCCESS{Recovery Success?}
+    FALLBACK_TRANSPORT --> SUCCESS
+    VERSION_NEG --> SUCCESS
+    CAPABILITY_DISABLE --> SUCCESS
+    GRACEFUL_DEGRADE --> SUCCESS
+    USER_NOTIFY --> SUCCESS
+    ALTERNATIVE_SOURCE --> SUCCESS
+    CACHE_FALLBACK --> SUCCESS
+    RETRY_TOOL --> SUCCESS
+    ALTERNATIVE_TOOL --> SUCCESS
+
+    SUCCESS -->|Yes| RESUME[Resume Operation]
+    SUCCESS -->|No| ESCALATE[Escalate Error]
+
+    ESCALATE --> LOG[Log Error]
+    ESCALATE --> ADMIN_NOTIFY[Notify Administrator]
+    ESCALATE --> SAFE_SHUTDOWN[Safe Shutdown]
+```
+
+This comprehensive data flow documentation illustrates how information moves through the MCP ecosystem and how different components coordinate to provide seamless context integration and tool execution capabilities.
