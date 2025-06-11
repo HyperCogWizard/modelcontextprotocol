@@ -10,38 +10,201 @@ capabilities across applications while maintaining clear security boundaries and
 isolating concerns. Built on JSON-RPC, MCP provides a stateful session protocol focused
 on context exchange and sampling coordination between clients and servers.
 
+## System Overview
+
+The following diagram provides a comprehensive view of the MCP ecosystem, showing how different components interact and the flow of data through the system:
+
+```mermaid
+graph TD
+    subgraph "MCP Ecosystem"
+        subgraph "Host Application Layer"
+            HA[Host Application<br/>Claude Desktop, IDE, etc.]
+            UI[User Interface]
+            LLM[Language Model]
+            HA --> UI
+            HA --> LLM
+        end
+
+        subgraph "Client Management Layer"
+            CM[Client Manager]
+            C1[MCP Client 1]
+            C2[MCP Client 2]
+            C3[MCP Client N]
+            HA --> CM
+            CM --> C1
+            CM --> C2
+            CM --> C3
+        end
+
+        subgraph "Transport Layer"
+            T1[Stdio Transport]
+            T2[HTTP Transport]
+            T3[Custom Transport]
+        end
+
+        subgraph "Server Ecosystem"
+            S1[File System Server]
+            S2[Database Server]
+            S3[API Server]
+            S4[Custom Server]
+        end
+
+        subgraph "Resource Layer"
+            R1[(Local Files)]
+            R2[(Database)]
+            R3[(External APIs)]
+            R4[(Custom Resources)]
+        end
+
+        subgraph "Protocol Layer"
+            JSON[JSON-RPC 2.0]
+            MSG[Message Routing]
+            CAP[Capability Negotiation]
+        end
+
+        C1 <--> T1
+        C2 <--> T2
+        C3 <--> T3
+        T1 <--> S1
+        T2 <--> S2
+        T3 <--> S3
+        T1 <--> S4
+
+        S1 <--> R1
+        S2 <--> R2
+        S3 <--> R3
+        S4 <--> R4
+
+        T1 -.-> JSON
+        T2 -.-> JSON
+        T3 -.-> JSON
+        JSON -.-> MSG
+        MSG -.-> CAP
+
+        LLM <--> CM
+        UI <--> CM
+    end
+```
+
 ## Core Components
+
+The MCP architecture consists of several interconnected layers that work together to provide seamless context integration:
 
 ```mermaid
 graph LR
     subgraph "Application Host Process"
-        H[Host]
-        C1[Client 1]
-        C2[Client 2]
-        C3[Client 3]
+        H[Host Application]
+        C1[Client 1<br/>File Operations]
+        C2[Client 2<br/>Database Access]
+        C3[Client 3<br/>External APIs]
         H --> C1
         H --> C2
         H --> C3
     end
 
-    subgraph "Local machine"
-        S1[Server 1<br>Files & Git]
-        S2[Server 2<br>Database]
-        R1[("Local<br>Resource A")]
-        R2[("Local<br>Resource B")]
+    subgraph "Local Environment"
+        S1[File Server<br/>Git, Documents]
+        S2[Database Server<br/>SQLite, PostgreSQL]
+        R1[("Local Files<br/>Code, Documents")]
+        R2[("Local Database<br/>Application Data")]
 
-        C1 --> S1
-        C2 --> S2
+        C1 <--> S1
+        C2 <--> S2
         S1 <--> R1
         S2 <--> R2
     end
 
-    subgraph "Internet"
-        S3[Server 3<br>External APIs]
-        R3[("Remote<br>Resource C")]
+    subgraph "Remote Environment"
+        S3[API Server<br/>REST, GraphQL]
+        S4[Cloud Server<br/>AWS, Azure]
+        R3[("External APIs<br/>GitHub, Slack")]
+        R4[("Cloud Resources<br/>S3, Databases")]
 
-        C3 --> S3
+        C3 <--> S3
+        C3 <--> S4
         S3 <--> R3
+        S4 <--> R4
+    end
+
+    subgraph "Security Boundary"
+        SEC[Security Layer]
+        AUTH[Authentication]
+        PERM[Permissions]
+        SEC --> AUTH
+        SEC --> PERM
+    end
+
+    H -.-> SEC
+    C1 -.-> SEC
+    C2 -.-> SEC
+    C3 -.-> SEC
+```
+
+### Detailed Component Interaction
+
+```mermaid
+graph TD
+    subgraph "Host Process Internals"
+        HA[Host Application]
+        CM[Client Manager]
+        SM[Security Manager]
+        UM[UI Manager]
+        LM[LLM Interface]
+
+        HA --> CM
+        HA --> SM
+        HA --> UM
+        HA --> LM
+
+        CM <--> SM
+        LM <--> CM
+        UM <--> LM
+    end
+
+    subgraph "Client Process Details"
+        C[MCP Client]
+        PM[Protocol Manager]
+        TM[Transport Manager]
+        MM[Message Manager]
+
+        CM --> C
+        C --> PM
+        C --> TM
+        C --> MM
+
+        PM <--> TM
+        TM <--> MM
+    end
+
+    subgraph "Server Process Details"
+        S[MCP Server]
+        RM[Resource Manager]
+        TL[Tool Library]
+        PL[Prompt Library]
+
+        TM <--> S
+        S --> RM
+        S --> TL
+        S --> PL
+
+        RM <--> TL
+        TL <--> PL
+    end
+
+    subgraph "Message Flow"
+        REQ[Requests]
+        RES[Responses]
+        NOT[Notifications]
+        ERR[Errors]
+
+        MM --> REQ
+        REQ --> MM
+        MM --> RES
+        RES --> MM
+        MM --> NOT
+        NOT --> MM
+        MM --> ERR
+        ERR --> MM
     end
 ```
 
@@ -114,6 +277,140 @@ implementation:
    - Protocol designed for future extensibility
    - Backwards compatibility is maintained
 
+## Protocol Message Flow
+
+The MCP protocol supports various message patterns for different types of communication. Understanding these flows is crucial for implementing robust MCP systems:
+
+### Message Type Hierarchy
+
+```mermaid
+graph TD
+    MSG[JSON-RPC Message]
+
+    subgraph "Request-Response Pattern"
+        REQ[Request Messages]
+        RES[Response Messages]
+
+        REQ --> INIT[Initialize Request]
+        REQ --> LIST[List Resources/Tools/Prompts]
+        REQ --> READ[Read Resource]
+        REQ --> CALL[Call Tool]
+        REQ --> SAMPLE[Sampling Request]
+        REQ --> SUB[Subscribe Request]
+
+        RES --> SUCCESS[Success Response]
+        RES --> ERROR[Error Response]
+    end
+
+    subgraph "One-Way Pattern"
+        NOT[Notification Messages]
+
+        NOT --> INITIALIZED[Initialized]
+        NOT --> PROGRESS[Progress Update]
+        NOT --> RESOURCE_CHANGED[Resource Changed]
+        NOT --> TOOL_CHANGED[Tool Changed]
+        NOT --> LOG[Logging Message]
+    end
+
+    MSG --> REQ
+    MSG --> RES
+    MSG --> NOT
+
+    INIT -.-> SUCCESS
+    LIST -.-> SUCCESS
+    READ -.-> SUCCESS
+    CALL -.-> SUCCESS
+    SAMPLE -.-> SUCCESS
+    SUB -.-> SUCCESS
+
+    INIT -.-> ERROR
+    LIST -.-> ERROR
+    READ -.-> ERROR
+    CALL -.-> ERROR
+    SAMPLE -.-> ERROR
+    SUB -.-> ERROR
+```
+
+### Complete Protocol Flow Sequence
+
+```mermaid
+sequenceDiagram
+    participant H as Host Application
+    participant C as MCP Client
+    participant T as Transport Layer
+    participant S as MCP Server
+    participant R as Resource/Tool
+
+    Note over H,R: Phase 1: Connection Establishment
+
+    H->>+C: Create client instance
+    C->>+T: Establish transport connection
+    T->>+S: Connect to server process
+
+    Note over H,R: Phase 2: Protocol Negotiation
+
+    C->>S: initialize(version, capabilities)
+    S-->>C: initialize_response(version, capabilities)
+    C->>S: initialized()
+
+    Note over H,R: Phase 3: Capability Discovery
+
+    C->>S: list_resources()
+    S->>R: enumerate resources
+    R-->>S: resource list
+    S-->>C: resources_response(resources[])
+
+    C->>S: list_tools()
+    S-->>C: tools_response(tools[])
+
+    C->>S: list_prompts()
+    S-->>C: prompts_response(prompts[])
+
+    Note over H,R: Phase 4: Active Operation
+
+    loop Resource Operations
+        H->>C: Request resource content
+        C->>S: read_resource(uri)
+        S->>R: fetch resource data
+        R-->>S: resource content
+        S-->>C: resource_response(content)
+        C-->>H: Provide content to LLM
+    end
+
+    loop Tool Execution
+        H->>C: Execute tool
+        C->>S: call_tool(name, params)
+        S->>R: execute tool logic
+        R-->>S: execution result
+        S-->>C: tool_response(result)
+        C-->>H: Return result
+    end
+
+    loop Sampling Requests
+        S->>C: sampling/createMessage(messages)
+        C->>H: Request LLM sampling
+        H-->>C: LLM response
+        C-->>S: sampling_response(message)
+    end
+
+    Note over H,R: Phase 5: Dynamic Updates
+
+    R->>S: Resource changed
+    S--)C: notification/resources/updated
+
+    S--)C: notification/tools/list_changed
+    C->>S: list_tools() [refresh]
+    S-->>C: tools_response(updated_tools[])
+
+    Note over H,R: Phase 6: Connection Cleanup
+
+    H->>C: Shutdown request
+    C->>S: close connection
+    S-->>C: acknowledgment
+    C->>-T: Close transport
+    T->>-S: Disconnect
+```
+
 ## Capability Negotiation
 
 The Model Context Protocol uses a capability-based negotiation system where clients and
@@ -126,39 +423,130 @@ determine which protocol features and primitives are available during a session.
 - Both parties must respect declared capabilities throughout the session
 - Additional capabilities can be negotiated through extensions to the protocol
 
+### Connection State Machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> Disconnected
+
+    Disconnected --> Connecting: connect()
+    Connecting --> Connected: transport_ready
+    Connecting --> Failed: connection_error
+
+    Connected --> Initializing: send_initialize()
+    Initializing --> Initialized: receive_initialize_response()
+    Initializing --> Failed: initialize_error
+
+    Initialized --> Ready: send_initialized()
+    Ready --> Active: first_request
+
+    Active --> Active: request/response
+    Active --> Active: notifications
+    Active --> Closing: close_requested
+    Active --> Failed: protocol_error
+
+    Ready --> Closing: close_requested
+    Closing --> Disconnected: transport_closed
+    Failed --> Disconnected: cleanup_complete
+
+    Failed --> Connecting: retry_connection
+```
+
+### Capability Exchange Flow
+
 ```mermaid
 sequenceDiagram
     participant Host
     participant Client
     participant Server
 
+    Note over Host,Server: Capability Declaration Phase
+
     Host->>+Client: Initialize client
-    Client->>+Server: Initialize session with capabilities
-    Server-->>Client: Respond with supported capabilities
+    Client->>+Server: initialize(protocol_version, client_capabilities)
+
+    rect rgb(240, 248, 255)
+        Note over Server: Server evaluates client capabilities
+        Note over Server: Determines compatible feature set
+    end
+
+    Server-->>Client: initialize_response(protocol_version, server_capabilities)
+
+    rect rgb(248, 255, 240)
+        Note over Client: Client processes server capabilities
+        Note over Client: Establishes feature compatibility matrix
+    end
+
+    Client->>Server: initialized()
 
     Note over Host,Server: Active Session with Negotiated Features
 
-    loop Client Requests
-        Host->>Client: User- or model-initiated action
-        Client->>Server: Request (tools/resources)
-        Server-->>Client: Response
-        Client-->>Host: Update UI or respond to model
+    alt If server supports resources
+        loop Resource Operations
+            Host->>Client: Request resource access
+            Client->>Server: list_resources()
+            Server-->>Client: resources_list
+
+            Client->>Server: read_resource(uri)
+            Server-->>Client: resource_content
+            Client-->>Host: Provide resource to model
+        end
     end
 
-    loop Server Requests
-        Server->>Client: Request (sampling)
-        Client->>Host: Forward to AI
-        Host-->>Client: AI response
-        Client-->>Server: Response
+    alt If server supports tools
+        loop Tool Operations
+            Host->>Client: Execute tool
+            Client->>Server: call_tool(name, arguments)
+            Server-->>Client: tool_result
+            Client-->>Host: Return tool output
+        end
     end
 
-    loop Notifications
-        Server--)Client: Resource updates
-        Client--)Server: Status changes
+    alt If server supports prompts
+        loop Prompt Operations
+            Host->>Client: Get available prompts
+            Client->>Server: list_prompts()
+            Server-->>Client: prompts_list
+
+            Host->>Client: Use specific prompt
+            Client->>Server: get_prompt(name, arguments)
+            Server-->>Client: prompt_content
+            Client-->>Host: Provide prompt to model
+        end
     end
 
-    Host->>Client: Terminate
-    Client->>-Server: End session
+    alt If client supports sampling
+        loop Sampling Requests
+            Server->>Client: sampling/createMessage(messages, preferences)
+            Client->>Host: Request model sampling
+
+            rect rgb(255, 248, 240)
+                Note over Host: Human-in-the-loop approval
+                Note over Host: Model generates response
+            end
+
+            Host-->>Client: Generated message
+            Client-->>Server: sampling_response(message)
+        end
+    end
+
+    alt If server supports subscriptions
+        loop Resource Monitoring
+            Client->>Server: subscribe(uri)
+            Server-->>Client: subscription_ack
+
+            loop Resource Updates
+                Note over Server: Resource changes detected
+                Server--)Client: notification/resources/updated
+                Client--)Host: Update UI/context
+            end
+        end
+    end
+
+    Note over Host,Server: Session Termination
+
+    Host->>Client: Terminate session
+    Client->>-Server: Close connection
     deactivate Server
 ```
 
@@ -175,3 +563,254 @@ example:
 
 This capability negotiation ensures clients and servers have a clear understanding of
 supported functionality while maintaining protocol extensibility.
+
+## Transport Layer Architecture
+
+MCP supports multiple transport mechanisms, each optimized for different deployment scenarios. The transport layer provides the foundation for all protocol communication:
+
+### Transport Type Overview
+
+```mermaid
+graph LR
+    subgraph "MCP Transport Layer"
+        TL[Transport Layer]
+
+        subgraph "Local Transports"
+            STDIO[Stdio Transport]
+            IPC[IPC Transport]
+            UNIX[Unix Socket]
+        end
+
+        subgraph "Network Transports"
+            HTTP[HTTP Transport]
+            WSS[WebSocket Secure]
+            TCP[TCP Socket]
+        end
+
+        subgraph "Custom Transports"
+            CUSTOM[Custom Implementation]
+            PLUGIN[Plugin System]
+        end
+
+        TL --> STDIO
+        TL --> IPC
+        TL --> UNIX
+        TL --> HTTP
+        TL --> WSS
+        TL --> TCP
+        TL --> CUSTOM
+        TL --> PLUGIN
+    end
+
+    subgraph "Protocol Features"
+        JSONRPC[JSON-RPC 2.0]
+        FRAME[Message Framing]
+        BUFFER[Buffering]
+        ERROR[Error Recovery]
+    end
+
+    STDIO --> JSONRPC
+    HTTP --> JSONRPC
+    WSS --> JSONRPC
+    CUSTOM --> JSONRPC
+
+    JSONRPC --> FRAME
+    FRAME --> BUFFER
+    BUFFER --> ERROR
+```
+
+### Transport Selection Matrix
+
+```mermaid
+graph TD
+    START[Choose Transport]
+
+    START --> LOCAL{Local or Remote?}
+
+    LOCAL -->|Local| PROC{Same Process?}
+    LOCAL -->|Remote| NETWORK{Network Type?}
+
+    PROC -->|Yes| DIRECT[Direct Function Calls]
+    PROC -->|No| STDIO_CHOICE[Stdio Transport]
+
+    NETWORK -->|HTTP Required| HTTP_TRANSPORT[HTTP Transport]
+    NETWORK -->|Real-time| WSS_TRANSPORT[WebSocket Transport]
+    NETWORK -->|Custom Protocol| CUSTOM_TRANSPORT[Custom Transport]
+
+    STDIO_CHOICE --> CONSIDERATIONS1[Consider: Process management,<br/>Security boundaries,<br/>Performance requirements]
+
+    HTTP_TRANSPORT --> CONSIDERATIONS2[Consider: Authentication,<br/>CORS policies,<br/>Load balancing]
+
+    WSS_TRANSPORT --> CONSIDERATIONS3[Consider: Connection persistence,<br/>Firewall configuration,<br/>TLS certificates]
+
+    CUSTOM_TRANSPORT --> CONSIDERATIONS4[Consider: Protocol complexity,<br/>Maintenance overhead,<br/>Compatibility]
+```
+
+### Message Flow Through Transport Layer
+
+```mermaid
+sequenceDiagram
+    participant App as Application
+    participant Client as MCP Client
+    participant Transport as Transport Layer
+    participant Network as Network/Process
+    participant Server as MCP Server
+
+    Note over App,Server: Message Sending Path
+
+    App->>Client: Send request/notification
+    Client->>Client: Serialize to JSON-RPC
+    Client->>Transport: write(json_message)
+
+    rect rgb(240, 248, 255)
+        Transport->>Transport: Frame message
+        Transport->>Transport: Add headers/metadata
+        Transport->>Transport: Buffer if needed
+    end
+
+    Transport->>Network: Transmit framed data
+    Network->>Server: Receive data
+
+    rect rgb(248, 255, 240)
+        Server->>Server: Parse frame
+        Server->>Server: Deserialize JSON-RPC
+        Server->>Server: Validate message
+    end
+
+    Note over App,Server: Message Receiving Path
+
+    Server->>Network: Send response
+    Network->>Transport: Receive data
+
+    rect rgb(255, 248, 240)
+        Transport->>Transport: Parse frame
+        Transport->>Transport: Handle buffering
+        Transport->>Transport: Check for errors
+    end
+
+    Transport->>Client: deliver(json_message)
+    Client->>Client: Deserialize response
+    Client->>App: Return result/notification
+```
+
+## Error Handling and Recovery Patterns
+
+Robust error handling is essential for reliable MCP implementations. The following diagrams illustrate error scenarios and recovery strategies:
+
+### Error Classification and Flow
+
+```mermaid
+graph TD
+    ERROR[Error Detected]
+
+    ERROR --> TRANSPORT_ERROR{Transport Error?}
+    ERROR --> PROTOCOL_ERROR{Protocol Error?}
+    ERROR --> APPLICATION_ERROR{Application Error?}
+
+    TRANSPORT_ERROR -->|Yes| CONN_LOST[Connection Lost]
+    TRANSPORT_ERROR -->|Yes| TIMEOUT[Timeout]
+    TRANSPORT_ERROR -->|Yes| NETWORK_FAIL[Network Failure]
+
+    PROTOCOL_ERROR -->|Yes| INVALID_MSG[Invalid Message]
+    PROTOCOL_ERROR -->|Yes| VERSION_MISMATCH[Version Mismatch]
+    PROTOCOL_ERROR -->|Yes| CAPABILITY_ERROR[Capability Error]
+
+    APPLICATION_ERROR -->|Yes| RESOURCE_NOT_FOUND[Resource Not Found]
+    APPLICATION_ERROR -->|Yes| TOOL_EXECUTION_FAIL[Tool Execution Failed]
+    APPLICATION_ERROR -->|Yes| PERMISSION_DENIED[Permission Denied]
+
+    CONN_LOST --> RECONNECT[Attempt Reconnection]
+    TIMEOUT --> RETRY[Retry with Backoff]
+    NETWORK_FAIL --> FALLBACK[Use Fallback Transport]
+
+    INVALID_MSG --> REJECT[Reject Message]
+    VERSION_MISMATCH --> NEGOTIATE[Renegotiate Protocol]
+    CAPABILITY_ERROR --> DISABLE_FEATURE[Disable Feature]
+
+    RESOURCE_NOT_FOUND --> NOT_FOUND_RESPONSE[Return 404 Error]
+    TOOL_EXECUTION_FAIL --> EXEC_ERROR_RESPONSE[Return Execution Error]
+    PERMISSION_DENIED --> AUTH_ERROR_RESPONSE[Return Auth Error]
+
+    RECONNECT --> SUCCESS{Success?}
+    RETRY --> SUCCESS
+    FALLBACK --> SUCCESS
+
+    SUCCESS -->|Yes| RESUME[Resume Operation]
+    SUCCESS -->|No| FAIL[Permanent Failure]
+```
+
+### Error Recovery State Machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> Normal
+
+    Normal --> ErrorDetected: error_occurs
+
+    ErrorDetected --> AnalyzingError: classify_error
+
+    AnalyzingError --> TransportError: transport_issue
+    AnalyzingError --> ProtocolError: protocol_issue
+    AnalyzingError --> ApplicationError: application_issue
+
+    TransportError --> Reconnecting: attempt_reconnect
+    TransportError --> Failed: unrecoverable
+
+    Reconnecting --> Normal: reconnect_success
+    Reconnecting --> RetryWithBackoff: reconnect_failed
+
+    RetryWithBackoff --> Reconnecting: retry_attempt
+    RetryWithBackoff --> Failed: max_retries_exceeded
+
+    ProtocolError --> Renegotiating: renegotiate_protocol
+    ProtocolError --> DegradedMode: disable_feature
+
+    Renegotiating --> Normal: renegotiation_success
+    Renegotiating --> Failed: renegotiation_failed
+
+    ApplicationError --> ErrorResponse: send_error_response
+    ErrorResponse --> Normal: error_handled
+
+    DegradedMode --> Normal: feature_restored
+    DegradedMode --> Failed: critical_feature_lost
+
+    Failed --> [*]
+```
+
+## Architecture Documentation Index
+
+This architecture section provides comprehensive documentation of the Model Context Protocol through multiple perspectives:
+
+### Core Architecture
+
+- **[Architecture Overview](/specification/draft/architecture/)** - This document provides the foundational understanding of MCP's client-host-server architecture, core components, and design principles.
+
+### Advanced Patterns
+
+- **[Advanced Architecture Patterns](/specification/draft/architecture/patterns)** - Explores cognitive flow patterns, neural-symbolic integration, hypergraph communication, and recursive implementation pathways that enable emergent behaviors.
+
+### Data Flow and Interactions
+
+- **[Data Flow and Component Interactions](/specification/draft/architecture/dataflow)** - Detailed sequence diagrams showing how resources, tools, prompts, and sampling requests flow through the system.
+
+### State Management
+
+- **[State Machines and Lifecycle Management](/specification/draft/architecture/states)** - Comprehensive state machine diagrams covering connection lifecycles, capability management, and operational states.
+
+## Key Architectural Insights
+
+The MCP architecture exhibits several emergent properties that make it particularly suited for AI and cognitive computing applications:
+
+1. **Recursive Composability**: Components can be nested and composed at multiple levels, enabling fractal scaling from individual processes to global networks.
+
+2. **Adaptive Capability Negotiation**: The protocol dynamically adjusts available features based on client-server capabilities, ensuring optimal functionality within constraints.
+
+3. **Hypergraph Communication Patterns**: Beyond simple client-server connections, MCP enables complex multi-node interaction patterns that mirror cognitive networks.
+
+4. **Neural-Symbolic Bridge**: MCP provides integration points between symbolic reasoning systems and neural processing, enabling hybrid AI architectures.
+
+5. **Emergent Context Integration**: The combination of resources, tools, and prompts creates emergent context that is greater than the sum of its parts.
+
+6. **Self-Modifying Protocol Patterns**: The architecture supports evolution and adaptation through recursive feedback loops and optimization mechanisms.
+
+These patterns position MCP as not just a protocol for context sharing, but as a foundation for building sophisticated distributed cognitive systems that can adapt, learn, and exhibit emergent intelligence.

@@ -1,0 +1,475 @@
+---
+title: State Machines and Lifecycle Management
+---
+
+<div id="enable-section-numbers" />
+
+This document provides detailed state machine diagrams that illustrate the various states and transitions within the MCP ecosystem, covering connection lifecycles, capability states, and operational modes.
+
+## Connection Lifecycle States
+
+### Master Connection State Machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> Uninitialized
+
+    state "Connection Management" as ConnMgmt {
+        Uninitialized --> TransportSetup: initiate_connection()
+        TransportSetup --> Connecting: transport_configured
+
+        state "Transport Layer" as Transport {
+            Connecting --> Connected: connection_established
+            Connecting --> TransportFailed: connection_timeout
+            Connecting --> TransportFailed: connection_refused
+
+            Connected --> Authenticating: start_auth
+            Connected --> ProtocolInit: no_auth_required
+        }
+
+        state "Authentication" as Auth {
+            Authenticating --> Authenticated: auth_success
+            Authenticating --> AuthFailed: auth_failure
+            AuthFailed --> Connecting: retry_auth
+            AuthFailed --> Terminated: max_auth_attempts
+        }
+
+        state "Protocol Negotiation" as Protocol {
+            Authenticated --> ProtocolInit: begin_protocol_handshake
+            ProtocolInit --> VersionNegotiation: send_initialize
+            VersionNegotiation --> CapabilityExchange: version_agreed
+            VersionNegotiation --> VersionMismatch: version_incompatible
+
+            CapabilityExchange --> CapabilitiesNegotiated: capabilities_agreed
+            CapabilityExchange --> CapabilityMismatch: incompatible_capabilities
+
+            CapabilitiesNegotiated --> Ready: send_initialized
+        }
+    }
+
+    state "Active Operation" as Active {
+        Ready --> Operational: first_request
+
+        state "Operational States" as OpStates {
+            Operational --> Processing: handle_request
+            Processing --> Operational: request_completed
+
+            Operational --> Subscribing: handle_subscription
+            Subscribing --> Operational: subscription_established
+
+            Operational --> Sampling: handle_sampling_request
+            Sampling --> Operational: sampling_completed
+
+            Operational --> ToolExecution: execute_tool
+            ToolExecution --> Operational: tool_completed
+        }
+
+        Operational --> Degraded: non_critical_error
+        Degraded --> Operational: error_resolved
+        Degraded --> Failed: critical_error
+    }
+
+    state "Termination" as Term {
+        Ready --> Closing: close_requested
+        Operational --> Closing: shutdown_initiated
+        Degraded --> Closing: force_close
+
+        Closing --> Closed: cleanup_completed
+
+        TransportFailed --> Terminated: unrecoverable
+        AuthFailed --> Terminated: auth_exhausted
+        VersionMismatch --> Terminated: incompatible_version
+        CapabilityMismatch --> Terminated: incompatible_capabilities
+        Failed --> Terminated: critical_failure
+
+        Closed --> [*]
+        Terminated --> [*]
+    }
+
+    %% Reconnection paths
+    TransportFailed --> Connecting: retry_connection
+    Degraded --> ProtocolInit: reconnect_protocol
+    Failed --> TransportSetup: full_reconnect
+```
+
+### Capability State Management
+
+```mermaid
+stateDiagram-v2
+    [*] --> CapabilityDiscovery
+
+    state "Discovery Phase" as Discovery {
+        CapabilityDiscovery --> ScanningServer: start_capability_scan
+        ScanningServer --> AnalyzingCapabilities: server_response_received
+        AnalyzingCapabilities --> CapabilityMatrix: analysis_complete
+    }
+
+    state "Negotiation Phase" as Negotiation {
+        CapabilityMatrix --> NegotiatingFeatures: begin_negotiation
+        NegotiatingFeatures --> ComparingRequirements: compare_client_server_caps
+        ComparingRequirements --> ResolvingConflicts: conflicts_detected
+        ComparingRequirements --> AgreementReached: no_conflicts
+
+        ResolvingConflicts --> FallbackMode: use_minimal_set
+        ResolvingConflicts --> AgreementReached: conflicts_resolved
+        ResolvingConflicts --> NegotiationFailed: irreconcilable_differences
+    }
+
+    state "Active Capability States" as ActiveCaps {
+        AgreementReached --> FullCapabilities: all_features_available
+        FallbackMode --> LimitedCapabilities: reduced_feature_set
+
+        state "Feature Management" as Features {
+            FullCapabilities --> FeatureA_Active: resources_enabled
+            FullCapabilities --> FeatureB_Active: tools_enabled
+            FullCapabilities --> FeatureC_Active: prompts_enabled
+            FullCapabilities --> FeatureD_Active: sampling_enabled
+            FullCapabilities --> FeatureE_Active: subscriptions_enabled
+
+            FeatureA_Active --> FeatureA_Suspended: temporary_disable
+            FeatureA_Suspended --> FeatureA_Active: re_enable
+
+            FeatureB_Active --> FeatureB_Error: tool_execution_failed
+            FeatureB_Error --> FeatureB_Active: error_recovered
+            FeatureB_Error --> FeatureB_Disabled: permanent_failure
+        }
+
+        LimitedCapabilities --> CoreOnly: minimal_feature_set
+        CoreOnly --> LimitedCapabilities: feature_upgrade_available
+    }
+
+    state "Dynamic Adjustment" as Dynamic {
+        FullCapabilities --> Reconfiguring: capability_change_requested
+        LimitedCapabilities --> Reconfiguring: feature_expansion_requested
+
+        Reconfiguring --> FullCapabilities: upgrade_successful
+        Reconfiguring --> LimitedCapabilities: partial_upgrade
+        Reconfiguring --> CoreOnly: downgrade_required
+        Reconfiguring --> CapabilityError: reconfiguration_failed
+    }
+
+    NegotiationFailed --> [*]
+    CapabilityError --> [*]
+    FeatureB_Disabled --> LimitedCapabilities: continue_with_remaining
+```
+
+## Resource Management States
+
+### Resource Lifecycle State Machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> ResourceDiscovered
+
+    state "Discovery and Registration" as Discovery {
+        ResourceDiscovered --> Validating: validate_resource
+        Validating --> Available: validation_passed
+        Validating --> Invalid: validation_failed
+
+        Available --> Cataloged: add_to_catalog
+        Cataloged --> Ready: resource_indexed
+    }
+
+    state "Active Resource States" as Active {
+        Ready --> Accessing: read_request_received
+
+        state "Access Management" as Access {
+            Accessing --> Loading: fetch_from_source
+            Loading --> Loaded: content_retrieved
+            Loading --> LoadError: fetch_failed
+
+            Loaded --> Cached: cache_content
+            Cached --> Serving: serve_from_cache
+            Serving --> Ready: request_completed
+
+            LoadError --> Retrying: retry_fetch
+            Retrying --> Loading: retry_attempt
+            Retrying --> Failed: max_retries_exceeded
+        }
+
+        Ready --> Subscribing: subscription_requested
+        Subscribing --> Monitored: subscription_active
+
+        state "Monitoring States" as Monitor {
+            Monitored --> ChangeDetected: resource_modified
+            ChangeDetected --> Validating: validate_changes
+            ChangeDetected --> NotifyingSubscribers: broadcast_change
+            NotifyingSubscribers --> Monitored: notifications_sent
+        }
+    }
+
+    state "Resource Maintenance" as Maintenance {
+        Cached --> Expired: cache_timeout
+        Expired --> Refreshing: refresh_content
+        Refreshing --> Loaded: content_updated
+        Refreshing --> Stale: refresh_failed
+
+        Stale --> Ready: serve_stale_content
+        Stale --> Unavailable: content_too_old
+
+        Failed --> Diagnosing: diagnose_failure
+        Diagnosing --> Recovering: attempt_recovery
+        Diagnosing --> Unavailable: permanent_failure
+
+        Recovering --> Ready: recovery_successful
+        Recovering --> Failed: recovery_failed
+    }
+
+    state "Termination" as Term {
+        Ready --> Removing: remove_resource
+        Monitored --> Removing: unsubscribe_and_remove
+        Unavailable --> Removing: cleanup_failed_resource
+
+        Removing --> Removed: cleanup_completed
+        Removed --> [*]
+    }
+
+    Invalid --> [*]
+```
+
+### Tool Execution State Machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> ToolRequested
+
+    state "Pre-execution Validation" as PreExec {
+        ToolRequested --> ValidatingTool: check_tool_exists
+        ValidatingTool --> ValidatingParams: tool_found
+        ValidatingTool --> ToolNotFound: tool_missing
+
+        ValidatingParams --> ValidatingPermissions: params_valid
+        ValidatingParams --> InvalidParams: params_invalid
+
+        ValidatingPermissions --> PreparingExecution: permissions_granted
+        ValidatingPermissions --> PermissionDenied: access_denied
+    }
+
+    state "Execution Phase" as Execution {
+        PreparingExecution --> ExecutionStarted: begin_execution
+
+        state "Active Execution" as ActiveExec {
+            ExecutionStarted --> Running: tool_launched
+
+            state "Execution Types" as ExecTypes {
+                Running --> SynchronousExec: blocking_tool
+                Running --> AsynchronousExec: background_tool
+                Running --> StreamingExec: streaming_tool
+
+                SynchronousExec --> Completing: execution_finished
+
+                AsynchronousExec --> ReportingProgress: progress_available
+                ReportingProgress --> AsynchronousExec: continue_execution
+                ReportingProgress --> Completing: execution_finished
+
+                StreamingExec --> StreamingData: data_available
+                StreamingData --> StreamingExec: continue_streaming
+                StreamingData --> Completing: stream_ended
+            }
+
+            Running --> Cancelling: cancel_requested
+            ReportingProgress --> Cancelling: cancel_requested
+            StreamingData --> Cancelling: cancel_requested
+
+            Cancelling --> Cancelled: cancellation_completed
+            Cancelling --> ForceTerminating: graceful_cancel_failed
+            ForceTerminating --> Terminated: force_kill_completed
+        }
+
+        Completing --> ValidatingResults: check_results
+        ValidatingResults --> ExecutionSucceeded: results_valid
+        ValidatingResults --> ExecutionFailed: results_invalid
+    }
+
+    state "Post-execution Cleanup" as PostExec {
+        ExecutionSucceeded --> CleaningUp: cleanup_resources
+        ExecutionFailed --> LoggingError: record_failure
+        Cancelled --> CleaningUp: cleanup_cancelled_execution
+        Terminated --> CleaningUp: cleanup_terminated_execution
+
+        LoggingError --> CleaningUp: error_logged
+        CleaningUp --> ToolCompleted: cleanup_finished
+
+        ToolCompleted --> [*]
+    }
+
+    state "Error States" as Errors {
+        ToolNotFound --> [*]
+        InvalidParams --> [*]
+        PermissionDenied --> [*]
+    }
+
+    %% Error recovery paths
+    ExecutionFailed --> Retrying: retry_allowed
+    Retrying --> PreparingExecution: retry_execution
+    Retrying --> ExecutionFailed: max_retries_exceeded
+```
+
+## Sampling Request State Machine
+
+### LLM Sampling Workflow States
+
+```mermaid
+stateDiagram-v2
+    [*] --> SamplingRequested
+
+    state "Request Validation" as Validation {
+        SamplingRequested --> ValidatingRequest: check_sampling_request
+        ValidatingRequest --> ValidatingCapabilities: request_structure_valid
+        ValidatingRequest --> InvalidRequest: malformed_request
+
+        ValidatingCapabilities --> ValidatingPermissions: client_supports_sampling
+        ValidatingCapabilities --> CapabilityUnsupported: no_sampling_support
+
+        ValidatingPermissions --> RequestValidated: permissions_sufficient
+        ValidatingPermissions --> PermissionRequired: user_approval_needed
+    }
+
+    state "Human-in-the-Loop" as HITL {
+        PermissionRequired --> AwaitingUserApproval: present_to_user
+        AwaitingUserApproval --> RequestValidated: user_approved
+        AwaitingUserApproval --> RequestDenied: user_rejected
+        AwaitingUserApproval --> RequestTimeout: approval_timeout
+    }
+
+    state "LLM Processing" as LLMProc {
+        RequestValidated --> PreparingContext: gather_context
+        PreparingContext --> ContextPrepared: context_assembled
+
+        ContextPrepared --> ProcessingWithLLM: send_to_llm
+
+        state "LLM Interaction" as LLMInt {
+            ProcessingWithLLM --> GeneratingResponse: llm_processing
+            GeneratingResponse --> ResponseGenerated: generation_complete
+            GeneratingResponse --> GenerationError: generation_failed
+
+            ResponseGenerated --> ValidatingResponse: check_response_quality
+            ValidatingResponse --> ResponseValidated: response_acceptable
+            ValidatingResponse --> RegeneratingResponse: response_rejected
+
+            RegeneratingResponse --> GeneratingResponse: retry_generation
+            RegeneratingResponse --> GenerationFailed: max_retries_exceeded
+        }
+    }
+
+    state "Response Review" as Review {
+        ResponseValidated --> AwaitingResponseReview: present_response_to_user
+        AwaitingResponseReview --> ResponseApproved: user_approved_response
+        AwaitingResponseReview --> ResponseRejected: user_rejected_response
+        AwaitingResponseReview --> ReviewTimeout: review_timeout
+
+        ResponseRejected --> RegeneratingResponse: regenerate_requested
+        ResponseRejected --> SamplingCancelled: user_cancelled
+    }
+
+    state "Completion" as Complete {
+        ResponseApproved --> DeliveryResponse: send_to_server
+        DeliveryResponse --> SamplingCompleted: response_delivered
+
+        SamplingCompleted --> [*]
+    }
+
+    state "Error Termination" as Errors {
+        InvalidRequest --> [*]
+        CapabilityUnsupported --> [*]
+        RequestDenied --> [*]
+        RequestTimeout --> [*]
+        GenerationError --> [*]
+        GenerationFailed --> [*]
+        ReviewTimeout --> ResponseApproved: auto_approve
+        SamplingCancelled --> [*]
+    }
+```
+
+## Subscription Management States
+
+### Resource Subscription Lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> SubscriptionRequested
+
+    state "Subscription Setup" as Setup {
+        SubscriptionRequested --> ValidatingSubscription: check_subscription_request
+        ValidatingSubscription --> ValidatingResource: request_valid
+        ValidatingSubscription --> InvalidSubscription: invalid_request
+
+        ValidatingResource --> ValidatingCapabilities: resource_exists
+        ValidatingResource --> ResourceNotFound: resource_missing
+
+        ValidatingCapabilities --> SettingUpMonitoring: server_supports_subscriptions
+        ValidatingCapabilities --> SubscriptionUnsupported: no_subscription_support
+    }
+
+    state "Active Monitoring" as Monitoring {
+        SettingUpMonitoring --> MonitoringActive: monitoring_established
+
+        state "Change Detection" as Detection {
+            MonitoringActive --> Watching: monitoring_resource
+
+            Watching --> ChangeDetected: resource_modified
+            ChangeDetected --> AnalyzingChange: determine_change_type
+
+            AnalyzingChange --> SignificantChange: major_modification
+            AnalyzingChange --> MinorChange: minor_modification
+            AnalyzingChange --> Watching: no_relevant_change
+
+            SignificantChange --> NotifyingSubscribers: broadcast_change
+            MinorChange --> ThrottledNotification: rate_limit_check
+
+            ThrottledNotification --> NotifyingSubscribers: rate_limit_ok
+            ThrottledNotification --> Watching: rate_limited
+
+            NotifyingSubscribers --> DeliveryConfirmation: notifications_sent
+            DeliveryConfirmation --> Watching: delivery_confirmed
+            DeliveryConfirmation --> RetryingDelivery: delivery_failed
+
+            RetryingDelivery --> NotifyingSubscribers: retry_notification
+            RetryingDelivery --> NotificationFailed: max_retries_exceeded
+            NotificationFailed --> Watching: continue_monitoring
+        }
+
+        Watching --> Paused: pause_monitoring
+        Paused --> Watching: resume_monitoring
+
+        Watching --> Reconfiguring: update_subscription
+        Reconfiguring --> Watching: reconfiguration_complete
+        Reconfiguring --> MonitoringError: reconfiguration_failed
+    }
+
+    state "Subscription Management" as Management {
+        MonitoringActive --> RefreshingSubscription: periodic_refresh
+        RefreshingSubscription --> MonitoringActive: refresh_successful
+        RefreshingSubscription --> SubscriptionExpired: refresh_failed
+
+        SubscriptionExpired --> RenewingSubscription: attempt_renewal
+        RenewingSubscription --> MonitoringActive: renewal_successful
+        RenewingSubscription --> SubscriptionTerminated: renewal_failed
+
+        MonitoringError --> DiagnosingError: analyze_error
+        DiagnosingError --> RecoveringMonitoring: recoverable_error
+        DiagnosingError --> SubscriptionTerminated: unrecoverable_error
+
+        RecoveringMonitoring --> MonitoringActive: recovery_successful
+        RecoveringMonitoring --> MonitoringError: recovery_failed
+    }
+
+    state "Termination" as Term {
+        MonitoringActive --> Unsubscribing: unsubscribe_requested
+        Paused --> Unsubscribing: cleanup_paused_subscription
+
+        Unsubscribing --> CleaningUpSubscription: stop_monitoring
+        CleaningUpSubscription --> SubscriptionClosed: cleanup_complete
+
+        SubscriptionTerminated --> SubscriptionClosed: error_cleanup
+        SubscriptionClosed --> [*]
+    }
+
+    state "Error States" as Errors {
+        InvalidSubscription --> [*]
+        ResourceNotFound --> [*]
+        SubscriptionUnsupported --> [*]
+    }
+```
+
+This comprehensive state machine documentation covers all major operational states within the MCP ecosystem, providing clear visibility into system behavior, transitions, and error handling at every level of the architecture.
